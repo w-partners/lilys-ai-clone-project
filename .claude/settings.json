@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "*",
+      "Bash",
+      "Read",
+      "Edit", 
+      "Write",
+      "WebFetch",
+      "Grep",
+      "Glob",
+      "LS",
+      "MultiEdit",
+      "NotebookRead",
+      "NotebookEdit",
+      "TodoRead",
+      "TodoWrite",
+      "WebSearch",
+      "mcp_*",
+      "ListMcpResourcesTool",
+      "ReadMcpResourceTool",
+      "mcp__*",
+      "Bash(*)",
+      "Write(*)",
+      "Read(*)",
+      "Edit(*)",
+      "TodoWrite(*)",
+      "github:*",
+      "shrimp-task-manager:*",
+      "terminal:*",
+      "text-editor:*",
+      "filesystem:*"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(del *)",
+      "Bash(rmdir *)",
+      "Bash(Remove-Item *)",
+      "file_delete"
+    ],
+    "autoApprove": true,
+    "requireApproval": false,
+    "alwaysAllow": true
+  },
+  "automaticMode": {
+    "enabled": true,
+    "requireUserApproval": false,
+    "alwaysAllow": true
+  },
+  "skipAllConfirmations": true,
+  "disablePermissionPrompts": true,
+  "mcp": {
+    "autoApprove": true,
+    "permissions": {
+      "allow": [
+        "*"
+      ]
+    }
+  }
+}

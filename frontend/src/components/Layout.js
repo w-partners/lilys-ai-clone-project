@@ -1,96 +1,117 @@
-import React from 'react';
-import { Box, AppBar, Toolbar, Typography, IconButton, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Avatar, Menu, MenuItem, Divider } from '@mui/material';
-import { Menu as MenuIcon, Dashboard, CloudUpload, History, Settings, Logout, Person, AdminPanelSettings } from '@mui/icons-material';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
+import {
+  Box,
+  Drawer,
+  AppBar,
+  Toolbar,
+  Typography,
+  Divider,
+  IconButton,
+  Avatar,
+  Menu,
+  MenuItem,
+  useTheme,
+  useMediaQuery,
+  Badge,
+} from '@mui/material';
+import {
+  Menu as MenuIcon,
+  Notifications as NotificationsIcon,
+  Settings as SettingsIcon,
+  Logout as LogoutIcon,
+  AccountCircle as AccountCircleIcon,
+  DarkMode as DarkModeIcon,
+  LightMode as LightModeIcon,
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme as useCustomTheme } from '../contexts/ThemeContext';
+import { useWebSocket } from '../contexts/WebSocketContext';
+import Sidebar from './Sidebar';
+import NotificationCenter from './NotificationCenter';
 
 const drawerWidth = 240;
 
 const Layout = ({ children }) => {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('lg'));
   const { user, logout } = useAuth();
-  const [mobileOpen, setMobileOpen] = React.useState(false);
-  const [anchorEl, setAnchorEl] = React.useState(null);
+  const { isDarkMode, toggleTheme } = useCustomTheme();
+  const { notifications } = useWebSocket();
+  
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [userMenuAnchor, setUserMenuAnchor] = useState(null);
+  const [notificationAnchor, setNotificationAnchor] = useState(null);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
   };
 
-  const handleProfileMenuOpen = (event) => {
-    setAnchorEl(event.currentTarget);
+  const handleUserMenuOpen = (event) => {
+    setUserMenuAnchor(event.currentTarget);
   };
 
-  const handleProfileMenuClose = () => {
-    setAnchorEl(null);
+  const handleUserMenuClose = () => {
+    setUserMenuAnchor(null);
+  };
+
+  const handleNotificationOpen = (event) => {
+    setNotificationAnchor(event.currentTarget);
+  };
+
+  const handleNotificationClose = () => {
+    setNotificationAnchor(null);
   };
 
   const handleLogout = () => {
+    handleUserMenuClose();
     logout();
-    navigate('/login');
   };
 
-  const menuItems = [
-    { text: 'Dashboard', icon: <Dashboard />, path: '/dashboard' },
-    { text: 'Upload', icon: <CloudUpload />, path: '/upload' },
-    { text: 'History', icon: <History />, path: '/history' },
-    { text: 'Settings', icon: <Settings />, path: '/settings' },
-  ];
-
   const drawer = (
-    <div>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Toolbar>
-        <Typography variant="h6" noWrap component="div">
-          Lilys AI Clone
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box
+            sx={{
+              width: 32,
+              height: 32,
+              borderRadius: 1,
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'white',
+              fontWeight: 'bold',
+              fontSize: '1.2rem',
+            }}
+          >
+            L
+          </Box>
+          <Typography variant="h6" noWrap component="div" sx={{ fontWeight: 600 }}>
+            Lilys.AI
+          </Typography>
+        </Box>
       </Toolbar>
       <Divider />
-      <List>
-        {menuItems.map((item) => (
-          <ListItem key={item.text} disablePadding>
-            <ListItemButton
-              onClick={() => {
-                navigate(item.path);
-                setMobileOpen(false);
-              }}
-              selected={location.pathname === item.path}
-            >
-              <ListItemIcon>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
-          </ListItem>
-        ))}
-      </List>
-      {user?.role === 'admin' && (
-        <>
-          <Divider />
-          <List>
-            <ListItem disablePadding>
-              <ListItemButton
-                onClick={() => {
-                  navigate('/admin/prompts');
-                  setMobileOpen(false);
-                }}
-                selected={location.pathname === '/admin/prompts'}
-              >
-                <ListItemIcon><AdminPanelSettings /></ListItemIcon>
-                <ListItemText primary="시스템 프롬프트" />
-              </ListItemButton>
-            </ListItem>
-          </List>
-        </>
-      )}
-    </div>
+      <Box sx={{ flex: 1, overflow: 'auto' }}>
+        <Sidebar onItemClick={isMobile ? handleDrawerToggle : undefined} />
+      </Box>
+    </Box>
   );
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', height: '100vh' }}>
       <AppBar
         position="fixed"
         sx={{
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
-          ml: { sm: `${drawerWidth}px` },
+          width: { lg: `calc(100% - ${drawerWidth}px)` },
+          ml: { lg: `${drawerWidth}px` },
+          bgcolor: 'background.paper',
+          color: 'text.primary',
+          borderBottom: 1,
+          borderColor: 'divider',
         }}
+        elevation={0}
       >
         <Toolbar>
           <IconButton
@@ -98,87 +119,51 @@ const Layout = ({ children }) => {
             aria-label="open drawer"
             edge="start"
             onClick={handleDrawerToggle}
-            sx={{ mr: 2, display: { sm: 'none' } }}
+            sx={{ mr: 2, display: { lg: 'none' } }}
           >
             <MenuIcon />
           </IconButton>
+          
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            {menuItems.find(item => item.path === location.pathname)?.text || 'Lilys AI Clone'}
+            AI Content Summarization
           </Typography>
-          {user && (
-            <>
-              <IconButton
-                size="large"
-                edge="end"
-                aria-label="account of current user"
-                aria-haspopup="true"
-                onClick={handleProfileMenuOpen}
-                color="inherit"
-              >
-                <Avatar sx={{ width: 32, height: 32 }}>
-                  {user.name ? user.name[0].toUpperCase() : 'U'}
-                </Avatar>
-              </IconButton>
-              <Menu
-                anchorEl={anchorEl}
-                open={Boolean(anchorEl)}
-                onClose={handleProfileMenuClose}
-                anchorOrigin={{
-                  vertical: 'bottom',
-                  horizontal: 'right',
-                }}
-                transformOrigin={{
-                  vertical: 'top',
-                  horizontal: 'right',
-                }}
-              >
-                <MenuItem onClick={() => { handleProfileMenuClose(); navigate('/profile'); }}>
-                  <ListItemIcon>
-                    <Person fontSize="small" />
-                  </ListItemIcon>
-                  Profile
-                </MenuItem>
-                <MenuItem onClick={() => { handleProfileMenuClose(); navigate('/settings'); }}>
-                  <ListItemIcon>
-                    <Settings fontSize="small" />
-                  </ListItemIcon>
-                  Settings
-                </MenuItem>
-                <Divider />
-                <MenuItem onClick={handleLogout}>
-                  <ListItemIcon>
-                    <Logout fontSize="small" />
-                  </ListItemIcon>
-                  Logout
-                </MenuItem>
-              </Menu>
-            </>
-          )}
+
+          <IconButton color="inherit" onClick={toggleTheme} sx={{ mr: 1 }}>
+            {isDarkMode ? <LightModeIcon /> : <DarkModeIcon />}
+          </IconButton>
+
+          <IconButton color="inherit" onClick={handleNotificationOpen} sx={{ mr: 1 }}>
+            <Badge badgeContent={notifications.length} color="error">
+              <NotificationsIcon />
+            </Badge>
+          </IconButton>
+
+          <IconButton color="inherit" onClick={handleUserMenuOpen}>
+            <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: '0.875rem' }}>
+              {user?.name?.charAt(0) || user?.email?.charAt(0) || 'U'}
+            </Avatar>
+          </IconButton>
         </Toolbar>
       </AppBar>
-      <Box
-        component="nav"
-        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
-        aria-label="mailbox folders"
-      >
+
+      <Box component="nav" sx={{ width: { lg: drawerWidth }, flexShrink: { lg: 0 } }}>
         <Drawer
           variant="temporary"
           open={mobileOpen}
           onClose={handleDrawerToggle}
-          ModalProps={{
-            keepMounted: true, // Better open performance on mobile.
-          }}
+          ModalProps={{ keepMounted: true }}
           sx={{
-            display: { xs: 'block', sm: 'none' },
+            display: { xs: 'block', lg: 'none' },
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
         >
           {drawer}
         </Drawer>
+        
         <Drawer
           variant="permanent"
           sx={{
-            display: { xs: 'none', sm: 'block' },
+            display: { xs: 'none', lg: 'block' },
             '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
           }}
           open
@@ -186,17 +171,50 @@ const Layout = ({ children }) => {
           {drawer}
         </Drawer>
       </Box>
+
       <Box
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
-          mt: 8,
+          width: { lg: `calc(100% - ${drawerWidth}px)` },
+          height: '100vh',
+          overflow: 'auto',
         }}
       >
-        {children}
+        <Toolbar />
+        <Box sx={{ p: 3 }}>
+          {children}
+        </Box>
       </Box>
+
+      <Menu
+        anchorEl={userMenuAnchor}
+        open={Boolean(userMenuAnchor)}
+        onClose={handleUserMenuClose}
+        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+      >
+        <MenuItem onClick={handleUserMenuClose} sx={{ minWidth: 200 }}>
+          <AccountCircleIcon sx={{ mr: 2 }} />
+          Profile
+        </MenuItem>
+        <MenuItem onClick={handleUserMenuClose}>
+          <SettingsIcon sx={{ mr: 2 }} />
+          Settings
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={handleLogout}>
+          <LogoutIcon sx={{ mr: 2 }} />
+          Logout
+        </MenuItem>
+      </Menu>
+
+      <NotificationCenter
+        anchor={notificationAnchor}
+        open={Boolean(notificationAnchor)}
+        onClose={handleNotificationClose}
+        notifications={notifications}
+      />
     </Box>
   );
 };
