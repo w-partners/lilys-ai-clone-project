@@ -12,26 +12,40 @@ class WebSocketManager {
   initialize(server) {
     this.io = socketIo(server, {
       cors: {
-        origin: process.env.FRONTEND_URL || "http://localhost:3000",
+        origin: [
+          process.env.FRONTEND_URL || 'http://localhost:3003',
+          'http://localhost:3003',
+          'http://localhost:3000',
+          'http://34.121.104.11',
+          'http://34.121.104.11:3003',
+          'http://34.121.104.11:5001',
+          'https://youtube.platformmakers.org',
+          'http://youtube.platformmakers.org'
+        ],
         methods: ["GET", "POST"],
         credentials: true
       }
     });
 
-    // Authentication middleware
+    // Authentication middleware - allow both authenticated and anonymous connections
     this.io.use((socket, next) => {
       try {
         const token = socket.handshake.auth.token;
-        if (!token) {
-          return next(new Error('Authentication token required'));
+        if (token) {
+          try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            socket.userId = decoded.userId;
+          } catch (error) {
+            logger.warn('Invalid WebSocket token, proceeding as anonymous:', error.message);
+            socket.userId = null;
+          }
+        } else {
+          socket.userId = null;
         }
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        socket.userId = decoded.userId;
         next();
       } catch (error) {
-        logger.error('WebSocket authentication failed:', error);
-        next(new Error('Authentication failed'));
+        logger.error('WebSocket middleware error:', error);
+        next(new Error('Connection failed'));
       }
     });
 
@@ -40,11 +54,15 @@ class WebSocketManager {
       logger.info(`User ${userId} connected via WebSocket`, { socketId: socket.id });
 
       // Store user-socket mapping
-      this.userSockets.set(userId, socket.id);
-      this.socketUsers.set(socket.id, userId);
-
-      // Join user-specific room
-      socket.join(`user:${userId}`);
+      if (userId) {
+        this.userSockets.set(userId, socket.id);
+        this.socketUsers.set(socket.id, userId);
+        // Join user-specific room
+        socket.join(`user:${userId}`);
+      }
+      
+      // All sockets join a common room for anonymous users
+      socket.join('anonymous');
 
       // Handle disconnection
       socket.on('disconnect', (reason) => {
@@ -90,8 +108,24 @@ class WebSocketManager {
     }
 
     try {
-      this.io.to(`user:${userId}`).emit('message', message);
-      logger.debug(`Message sent to user ${userId}:`, { type: message.type });
+      // Send to user's room if userId is provided
+      if (userId) {
+        this.io.to(`user:${userId}`).emit('message', message);
+        
+        // Also emit specific event types for backward compatibility
+        if (message.type) {
+          this.io.to(`user:${userId}`).emit(message.type, message);
+        }
+      }
+      
+      // Also send to anonymous room for non-authenticated users
+      // This ensures messages reach users who haven't logged in
+      this.io.to('anonymous').emit('message', message);
+      if (message.type) {
+        this.io.to('anonymous').emit(message.type, message);
+      }
+      
+      logger.info(`Message sent to user ${userId} and anonymous:`, { type: message.type, jobId: message.jobId });
       return true;
     } catch (error) {
       logger.error(`Failed to send message to user ${userId}:`, error);

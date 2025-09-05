@@ -5,6 +5,7 @@ const path = require('path');
 const puppeteer = require('puppeteer');
 const ffmpeg = require('fluent-ffmpeg');
 const logger = require('../../utils/logger');
+const TranscriptionService = require('./TranscriptionService');
 
 class ContentExtractor {
   constructor() {
@@ -156,22 +157,63 @@ class ContentExtractor {
   }
 
   async extractFromMediaFile(fileData) {
-    // For now, return a placeholder indicating transcription is needed
-    // In a real implementation, you would:
-    // 1. Save the file temporarily
-    // 2. Use ffmpeg to extract audio
-    // 3. Send to speech-to-text service (OpenAI Whisper, Google Speech-to-Text, etc.)
-    // 4. Return the transcribed text
+    const tempDir = path.join(process.cwd(), 'temp');
+    await fs.mkdir(tempDir, { recursive: true });
     
-    return {
-      text: '[AUDIO/VIDEO TRANSCRIPTION REQUIRED]',
-      metadata: {
-        originalName: fileData.originalname,
-        size: fileData.size,
-        type: fileData.mimetype,
-        note: 'Transcription service integration required'
+    const tempFilePath = path.join(tempDir, `${Date.now()}_${fileData.originalname}`);
+    
+    try {
+      // Write buffer to temporary file
+      await fs.writeFile(tempFilePath, fileData.buffer);
+      
+      let transcriptionResult;
+      
+      // Determine if it's audio or video
+      if (fileData.mimetype.startsWith('audio/')) {
+        transcriptionResult = await TranscriptionService.transcribeAudio(tempFilePath);
+      } else if (fileData.mimetype.startsWith('video/')) {
+        transcriptionResult = await TranscriptionService.transcribeVideo(tempFilePath);
+      } else {
+        throw new Error(`Unsupported media type: ${fileData.mimetype}`);
       }
-    };
+      
+      // Clean up temp file
+      await fs.unlink(tempFilePath);
+      
+      return {
+        text: transcriptionResult.text,
+        metadata: {
+          filename: fileData.originalname,
+          size: fileData.size,
+          mimetype: fileData.mimetype,
+          duration: transcriptionResult.duration,
+          language: transcriptionResult.language,
+          extractedAt: new Date().toISOString(),
+          method: 'whisper'
+        }
+      };
+    } catch (error) {
+      // Clean up on error
+      try {
+        await fs.unlink(tempFilePath);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+      
+      logger.error('Media file extraction failed:', error);
+      
+      // Fallback response when transcription fails
+      return {
+        text: `[Media file: ${fileData.originalname}] - Transcription failed: ${error.message}`,
+        metadata: {
+          filename: fileData.originalname,
+          size: fileData.size,
+          mimetype: fileData.mimetype,
+          error: error.message,
+          note: 'Ensure OpenAI API key is configured for transcription'
+        }
+      };
+    }
   }
 
   async extractFromURL(url) {

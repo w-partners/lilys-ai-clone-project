@@ -6,16 +6,24 @@ const compression = require('compression');
 const morgan = require('morgan');
 const http = require('http');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 const logger = require('./utils/logger');
 const websocket = require('./utils/websocket');
 const QueueService = require('./services/QueueService');
 const AIWorker = require('./workers/aiWorker');
+const db = require('./models');
 
 // Import routes
+const authRouter = require('./routes/auth');
 const summariesRouter = require('./routes/summaries');
+const promptsRouter = require('./routes/prompts');
 
 const app = express();
-const server = http.createServer(app);
+
+// Increase header size limit to fix 431 error
+const server = http.createServer({
+  maxHeaderSize: 32768 // 32KB
+}, app);
 const PORT = process.env.PORT || 5000;
 
 // Security middleware
@@ -24,7 +32,18 @@ app.use(compression());
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3003',
+    'http://localhost:3003',
+    'http://localhost:3000',
+    'http://localhost:3004',
+    'http://localhost:3005',
+    'http://34.121.104.11',
+    'http://34.121.104.11:3003',
+    'http://34.121.104.11:5001',
+    'https://youtube.platformmakers.org',
+    'http://youtube.platformmakers.org'
+  ],
   credentials: true
 }));
 
@@ -37,6 +56,9 @@ const limiter = rateLimit({
   legacyHeaders: false
 });
 app.use('/api/', limiter);
+
+// Trust proxy for Cloudflare/Nginx with specific configuration
+app.set('trust proxy', 1); // Trust first proxy (nginx)
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -51,30 +73,41 @@ if (process.env.NODE_ENV !== 'test') {
   }));
 }
 
+// Serve static files from React build
+app.use(express.static(path.join(__dirname, 'public')));
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    verification: 'LILYS-AI-CLONE-2025-08-28'
   });
 });
 
 // API routes
+app.use('/api/auth', authRouter);
 app.use('/api/summaries', summariesRouter);
+app.use('/api/prompts', promptsRouter);
+app.use('/api/usage', require('./routes/api-usage'));
+app.use('/api/keys', require('./routes/apiKeys'));
+app.use('/api/system-prompts', require('./routes/systemPrompts'));
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'Lilys.AI Clone Backend API',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: '/health',
-      summaries: '/api/summaries'
-    }
-  });
+// Serve React app for all non-API routes
+app.get('*', (req, res) => {
+  // Skip if it's an API route
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({
+      error: 'Endpoint not found',
+      path: req.originalUrl,
+      method: req.method
+    });
+  }
+  
+  // Serve React app
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // 404 handler
@@ -117,6 +150,21 @@ let aiWorker;
 
 async function initializeServices() {
   try {
+    // Initialize database
+    // Skip sync - use migrations instead
+    // await db.sequelize.sync({ alter: process.env.NODE_ENV !== 'production' });
+    logger.info('Database ready (using migrations)');
+    
+    // Initialize default accounts
+    const initializeAccounts = require('./scripts/initializeAccounts');
+    await initializeAccounts();
+    logger.info('Default accounts initialized');
+    
+    // Initialize default prompts - DISABLED (manually manage prompts)
+    // const initializePrompts = require('./scripts/initializePrompts');
+    // await initializePrompts();
+    // logger.info('Default prompts initialized');
+    
     // Initialize queue service
     queueService = new QueueService();
     logger.info('Queue service initialized');
@@ -126,6 +174,11 @@ async function initializeServices() {
     
     // Set up queue processing
     queueService.aiQueue.process('ai-processing', async (job) => {
+      return await aiWorker.processJob(job);
+    });
+    
+    // Set up YouTube processing
+    queueService.aiQueue.process('youtube-processing', async (job) => {
       return await aiWorker.processJob(job);
     });
     
