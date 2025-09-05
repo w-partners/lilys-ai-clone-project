@@ -27,6 +27,7 @@
     "lodash": "^4.17.21",
     "clsx": "^2.0.0"
   },
+  "proxy": "http://localhost:5001",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
@@ -60,7 +61,6 @@
       "last 1 safari version"
     ]
   },
-  "proxy": "http://localhost:5000",
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"

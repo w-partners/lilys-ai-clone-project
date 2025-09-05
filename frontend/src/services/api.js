@@ -2,8 +2,8 @@ import axios from 'axios';
 
 // Create axios instance
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
-  timeout: 30000,
+  baseURL: process.env.REACT_APP_API_URL ? `${process.env.REACT_APP_API_URL}/api` : '/api',
+  timeout: 90000, // Increased to 90 seconds for YouTube processing
   headers: {
     'Content-Type': 'application/json',
   },
@@ -40,8 +40,8 @@ api.interceptors.response.use(
 
 // Auth service
 export const authService = {
-  login: async (email, password) => {
-    const response = await api.post('/auth/login', { email, password });
+  login: async (phone, password) => {
+    const response = await api.post('/auth/login', { phone, password });
     return response;
   },
   
@@ -91,8 +91,14 @@ export const summaryService = {
     return response;
   },
   
-  processUrl: async (url, provider = 'gemini') => {
-    const response = await api.post('/summaries/url', { url, provider });
+  processUrl: async (url, provider = 'gemini', apiKey = null) => {
+    // YouTube URL 처리를 위한 전용 엔드포인트 사용
+    const response = await api.post('/summaries/youtube', { 
+      url, 
+      provider,
+      apiKey,
+      background: false // 즉시 처리하여 결과 반환
+    });
     return response;
   },
   
@@ -106,6 +112,11 @@ export const summaryService = {
     return response;
   },
   
+  getSummary: async (summaryId) => {
+    const response = await api.get(`/summaries/${summaryId}`);
+    return response;
+  },
+  
   deleteSummary: async (summaryId) => {
     const response = await api.delete(`/summaries/${summaryId}`);
     return response;
@@ -113,6 +124,98 @@ export const summaryService = {
   
   testProviders: async () => {
     const response = await api.get('/summaries/providers/test');
+    return response;
+  },
+  
+  getApiKeys: async () => {
+    const response = await api.get('/summaries/providers/keys');
+    return response;
+  },
+  
+  sendEmail: async (data) => {
+    const response = await api.post('/summaries/send-email', data);
+    return response;
+  },
+  
+  getStats: async () => {
+    const response = await api.get('/summaries/stats');
+    return response;
+  },
+  
+  processContent: async (url, provider = 'gemini', apiKey = null, email = null) => {
+    const response = await api.post('/summaries/process', { 
+      url, 
+      apiKey,
+      email,
+      inputType: 'youtube'
+    });
+    return response;
+  },
+};
+
+// System prompts service
+export const systemPromptService = {
+  getAll: async () => {
+    const response = await api.get('/system-prompts');
+    return response;
+  },
+  
+  getPublic: async () => {
+    // Public API - no authentication required
+    const response = await axios.get(`${api.defaults.baseURL}/system-prompts/public`);
+    return response.data;
+  },
+  
+  getById: async (id) => {
+    const response = await api.get(`/system-prompts/${id}`);
+    return response;
+  },
+  
+  create: async (data) => {
+    const response = await api.post('/system-prompts', data);
+    return response;
+  },
+  
+  update: async (id, data) => {
+    const response = await api.put(`/system-prompts/${id}`, data);
+    return response;
+  },
+  
+  delete: async (id) => {
+    const response = await api.delete(`/system-prompts/${id}`);
+    return response;
+  },
+};
+
+// User service
+export const userService = {
+  getProfile: async () => {
+    const response = await api.get('/users/profile');
+    return response;
+  },
+  
+  updateProfile: async (data) => {
+    const response = await api.put('/users/profile', data);
+    return response;
+  },
+  
+  updateApiKeys: async (data) => {
+    const response = await api.put('/users/api-keys', data);
+    return response;
+  },
+  
+  getAll: async () => {
+    const response = await api.get('/users');
+    return response;
+  },
+  
+  updateUser: async (userId, data) => {
+    const response = await api.put(`/users/${userId}`, data);
+    return response;
+  },
+  
+  deleteUser: async (userId) => {
+    const response = await api.delete(`/users/${userId}`);
     return response;
   },
 };

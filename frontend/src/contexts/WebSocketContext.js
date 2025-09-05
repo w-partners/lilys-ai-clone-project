@@ -10,18 +10,14 @@ export const WebSocketProvider = ({ children }) => {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [jobSubscriptions, setJobSubscriptions] = useState(new Map());
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
 
   useEffect(() => {
-    if (user) {
-      initializeSocket();
-    } else if (socket) {
-      socket.disconnect();
-      setSocket(null);
-      setConnected(false);
-    }
+    // Always initialize socket, regardless of user login status
+    initializeSocket();
 
     return () => {
       if (socket) {
@@ -31,15 +27,28 @@ export const WebSocketProvider = ({ children }) => {
         clearTimeout(reconnectTimeoutRef.current);
       }
     };
-  }, [user]);
+  }, [user]); // Still watch user changes to update token
 
   const initializeSocket = () => {
     const token = localStorage.getItem('token');
-    if (!token) return;
+    // Allow connection even without token
 
-    const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5000', {
+    // Determine the correct WebSocket URL based on current location
+    let socketUrl;
+    
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      // Local development
+      socketUrl = 'http://localhost:5000';
+    } else {
+      // Production - use relative path for same origin
+      socketUrl = '';
+    }
+    
+    console.log('Connecting to WebSocket at:', socketUrl);
+    
+    const newSocket = io(socketUrl, {
       auth: {
-        token: token
+        token: token || '' // Send empty string if no token
       },
       transports: ['websocket', 'polling'],
       timeout: 20000,
@@ -84,6 +93,25 @@ export const WebSocketProvider = ({ children }) => {
       handleIncomingMessage(message);
     });
 
+    // Handle job-specific updates
+    newSocket.on('job:progress', (data) => {
+      console.log('Received job:progress event:', data);
+      const { jobId, progress, message } = data;
+      handleJobUpdate(jobId, { type: 'progress', progress, message });
+    });
+
+    newSocket.on('job:complete', (data) => {
+      console.log('Received job:complete event:', data);
+      const { jobId, summaryId, result } = data;
+      handleJobUpdate(jobId, { type: 'complete', summaryId, result });
+    });
+
+    newSocket.on('job:error', (data) => {
+      console.log('Received job:error event:', data);
+      const { jobId, error } = data;
+      handleJobUpdate(jobId, { type: 'error', error });
+    });
+
     // Handle pong responses
     newSocket.on('pong', () => {
       console.log('Received pong from server');
@@ -105,9 +133,8 @@ export const WebSocketProvider = ({ children }) => {
     console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
     
     reconnectTimeoutRef.current = setTimeout(() => {
-      if (user) {
-        initializeSocket();
-      }
+      // Always attempt to reconnect, regardless of user status
+      initializeSocket();
     }, delay);
   };
 
@@ -155,6 +182,39 @@ export const WebSocketProvider = ({ children }) => {
     }
   };
 
+  const handleJobUpdate = (jobId, update) => {
+    const callbacks = jobSubscriptions.get(jobId);
+    if (callbacks && callbacks.length > 0) {
+      callbacks.forEach(callback => {
+        try {
+          callback(update);
+        } catch (error) {
+          console.error('Error in job update callback:', error);
+        }
+      });
+    }
+
+    // Add notification for job updates
+    if (update.type === 'complete') {
+      addNotification({
+        id: Date.now(),
+        type: 'success',
+        title: 'Summary Ready',
+        message: 'Your content summary is ready to view!',
+        timestamp: new Date(),
+        action: { type: 'navigate', summaryId: update.summaryId }
+      });
+    } else if (update.type === 'error') {
+      addNotification({
+        id: Date.now(),
+        type: 'error',
+        title: 'Processing Failed',
+        message: update.error || 'An error occurred during processing',
+        timestamp: new Date(),
+      });
+    }
+  };
+
   const addNotification = (notification) => {
     setNotifications(prev => [notification, ...prev.slice(0, 49)]); // Keep last 50 notifications
   };
@@ -191,6 +251,36 @@ export const WebSocketProvider = ({ children }) => {
     return false;
   };
 
+  const subscribe = (event, callback) => {
+    if (event.startsWith('job:')) {
+      const jobId = event.split(':')[1];
+      setJobSubscriptions(prev => {
+        const newMap = new Map(prev);
+        const callbacks = newMap.get(jobId) || [];
+        callbacks.push(callback);
+        newMap.set(jobId, callbacks);
+        return newMap;
+      });
+    }
+  };
+
+  const unsubscribe = (event, callback) => {
+    if (event.startsWith('job:')) {
+      const jobId = event.split(':')[1];
+      setJobSubscriptions(prev => {
+        const newMap = new Map(prev);
+        const callbacks = newMap.get(jobId) || [];
+        const filtered = callbacks.filter(cb => cb !== callback);
+        if (filtered.length === 0) {
+          newMap.delete(jobId);
+        } else {
+          newMap.set(jobId, filtered);
+        }
+        return newMap;
+      });
+    }
+  };
+
   const value = {
     socket,
     connected,
@@ -200,6 +290,8 @@ export const WebSocketProvider = ({ children }) => {
     pingServer,
     removeNotification,
     clearNotifications,
+    subscribe,
+    unsubscribe,
   };
 
   return (

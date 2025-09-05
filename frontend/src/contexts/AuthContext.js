@@ -32,19 +32,53 @@ export const AuthProvider = ({ children }) => {
     const initAuth = async () => {
       try {
         const token = localStorage.getItem('token');
-        if (token) {
+        const userData = localStorage.getItem('user');
+        
+        if (token && userData) {
           // Set token in axios headers
           authService.setAuthToken(token);
           
-          // Verify token and get user info
-          const user = await authService.getCurrentUser();
-          dispatch({ type: 'SET_USER', payload: user });
+          try {
+            // Try to parse existing user data
+            const user = JSON.parse(userData);
+            
+            // If user data has role field, it's in correct format
+            if (user && user.role) {
+              dispatch({ type: 'SET_USER', payload: user });
+              return;
+            }
+          } catch (parseError) {
+            console.warn('Failed to parse stored user data:', parseError);
+          }
+          
+          // If no valid user data or parsing failed, fetch from server
+          try {
+            const response = await authService.getCurrentUser();
+            // Backend returns: { success: true, data: { user } }
+            if (response && response.success && response.data && response.data.user) {
+              const user = response.data.user;
+              // Store user data in localStorage for persistence
+              localStorage.setItem('user', JSON.stringify(user));
+              dispatch({ type: 'SET_USER', payload: user });
+            } else {
+              throw new Error('Invalid user data received');
+            }
+          } catch (apiError) {
+            console.error('Failed to fetch user from API:', apiError);
+            // Clear invalid token
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            authService.setAuthToken(null);
+            dispatch({ type: 'SET_LOADING', payload: false });
+          }
         } else {
           dispatch({ type: 'SET_LOADING', payload: false });
         }
       } catch (error) {
         console.error('Auth initialization error:', error);
         localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        authService.setAuthToken(null);
         dispatch({ type: 'SET_LOADING', payload: false });
       }
     };
@@ -52,15 +86,22 @@ export const AuthProvider = ({ children }) => {
     initAuth();
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (phone, password) => {
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
       
-      const response = await authService.login(email, password);
-      const { user, token } = response;
+      const response = await authService.login(phone, password);
       
-      // Store token
+      // The axios interceptor returns response.data, so response is already the data object
+      // Backend returns: { success: true, data: { user, token } }
+      if (!response || !response.success || !response.data) {
+        throw new Error('Invalid response from server');
+      }
+      const { user, token } = response.data;
+      
+      // Store token and user
       localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
       authService.setAuthToken(token);
       
       dispatch({ type: 'SET_USER', payload: user });
@@ -68,7 +109,7 @@ export const AuthProvider = ({ children }) => {
       
       return { success: true };
     } catch (error) {
-      const message = error.response?.data?.message || 'Login failed';
+      const message = error.response?.data?.error || error.response?.data?.message || 'Login failed';
       dispatch({ type: 'SET_ERROR', payload: message });
       toast.error(message);
       return { success: false, error: message };
@@ -80,10 +121,11 @@ export const AuthProvider = ({ children }) => {
       dispatch({ type: 'SET_LOADING', payload: true });
       
       const response = await authService.register(userData);
-      const { user, token } = response;
+      const { user, token } = response.data;
       
-      // Store token
+      // Store token and user
       localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
       authService.setAuthToken(token);
       
       dispatch({ type: 'SET_USER', payload: user });
@@ -91,7 +133,7 @@ export const AuthProvider = ({ children }) => {
       
       return { success: true };
     } catch (error) {
-      const message = error.response?.data?.message || 'Registration failed';
+      const message = error.response?.data?.error || error.response?.data?.message || 'Registration failed';
       dispatch({ type: 'SET_ERROR', payload: message });
       toast.error(message);
       return { success: false, error: message };
@@ -100,9 +142,15 @@ export const AuthProvider = ({ children }) => {
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     authService.setAuthToken(null);
     dispatch({ type: 'LOGOUT' });
     toast.success('Logged out successfully');
+  };
+
+  const updateUser = (userData) => {
+    dispatch({ type: 'SET_USER', payload: userData });
+    localStorage.setItem('user', JSON.stringify(userData));
   };
 
   const clearError = () => {
@@ -116,6 +164,7 @@ export const AuthProvider = ({ children }) => {
     login,
     register,
     logout,
+    updateUser,
     clearError,
   };
 
