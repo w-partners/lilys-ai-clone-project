@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학습정보센터 - 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .input-section {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        input[type="url"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            padding: 12px 24px;
+            background-color: #1976d2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            min-width: 100px;
+        }
+        button:hover {
+            background-color: #1565c0;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-section {
+            margin-top: 20px;
+            display: none;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #1976d2;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            margin-bottom: 10px;
+            color: #666;
+        }
+        .results-section {
+            margin-top: 20px;
+            display: none;
+        }
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            min-width: auto;
+        }
+        .tab.active {
+            border-bottom-color: #1976d2;
+            color: #1976d2;
+        }
+        .tab-content {
+            display: none;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .status.error {
+            background-color: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef5350;
+        }
+        .status.success {
+            background-color: #e8f5e8;
+            color: #2e7d2e;
+            border: 1px solid #4caf50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>학습정보센터</h1>
+        <p class="subtitle">YouTube URL을 입력하면 AI가 자막을 분석하여 6가지 방식으로 요약해드립니다.</p>
+        
+        <div class="input-section">
+            <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=..." />
+            <button onclick="processVideo()" id="processBtn">분석</button>
+        </div>
+
+        <div class="progress-section" id="progressSection">
+            <div class="progress-text" id="progressText">처리 시작...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </div>
+
+        <div id="status"></div>
+
+        <div class="results-section" id="resultsSection">
+            <h3>분석 결과</h3>
+            <div class="tabs" id="tabs"></div>
+            <div id="tabContents"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        const API_BASE = 'http://localhost:5002/api';
+        const SOCKET_URL = 'http://localhost:5002';
+        
+        let socket = null;
+        let currentJobId = null;
+
+        // Socket.IO 연결
+        function connectSocket() {
+            socket = io(SOCKET_URL);
+            
+            socket.on('connect', () => {
+                console.log('WebSocket 연결됨');
+            });
+
+            socket.on('job:progress', (data) => {
+                updateProgress(data.progress, data.currentStage);
+            });
+
+            socket.on('job:complete', (data) => {
+                hideProgress();
+                showResults(data.summaries);
+                showStatus('분석 완료!', 'success');
+            });
+
+            socket.on('job:error', (data) => {
+                hideProgress();
+                showStatus('오류: ' + data.error, 'error');
+                enableButton();
+            });
+        }
+
+        // 비디오 처리 시작
+        async function processVideo() {
+            const url = document.getElementById('youtubeUrl').value.trim();
+            
+            if (!url) {
+                showStatus('YouTube URL을 입력해주세요.', 'error');
+                return;
+            }
+
+            if (!isValidYouTubeUrl(url)) {
+                showStatus('올바른 YouTube URL을 입력해주세요.', 'error');
+                return;
+            }
+
+            disableButton();
+            showProgress();
+            hideResults();
+            clearStatus();
+
+            try {
+                const response = await fetch(`${API_BASE}/process/youtube`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    currentJobId = data.data.jobId;
+                    console.log('처리 시작:', currentJobId);
+                } else {
+                    throw new Error(data.error || '알 수 없는 오류');
+                }
+
+            } catch (error) {
+                hideProgress();
+                showStatus('처리 중 오류가 발생했습니다: ' + error.message, 'error');
+                enableButton();
+            }
+        }
+
+        // YouTube URL 검증
+        function isValidYouTubeUrl(url) {
+            const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/|v\/)|youtu\.be\/)[\w-]+/;
+            return youtubeRegex.test(url);
+        }
+
+        // UI 업데이트 함수들
+        function disableButton() {
+            const btn = document.getElementById('processBtn');
+            btn.disabled = true;
+            btn.textContent = '처리중...';
+        }
+
+        function enableButton() {
+            const btn = document.getElementById('processBtn');
+            btn.disabled = false;
+            btn.textContent = '분석';
+        }
+
+        function showProgress() {
+            document.getElementById('progressSection').style.display = 'block';
+        }
+
+        function hideProgress() {
+            document.getElementById('progressSection').style.display = 'none';
+            enableButton();
+        }
+
+        function updateProgress(progress, stage) {
+            document.getElementById('progressText').textContent = stage || '처리 중...';
+            document.getElementById('progressFill').style.width = progress + '%';
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function clearStatus() {
+            document.getElementById('status').innerHTML = '';
+        }
+
+        function hideResults() {
+            document.getElementById('resultsSection').style.display = 'none';
+        }
+
+        function showResults(summaries) {
+            const resultsSection = document.getElementById('resultsSection');
+            const tabs = document.getElementById('tabs');
+            const tabContents = document.getElementById('tabContents');
+
+            // 탭 생성
+            tabs.innerHTML = '';
+            tabContents.innerHTML = '';
+
+            summaries.forEach((summary, index) => {
+                // 탭 버튼
+                const tab = document.createElement('button');
+                tab.className = `tab ${index === 0 ? 'active' : ''}`;
+                tab.textContent = summary.systemPrompt?.name || `결과 ${index + 1}`;
+                tab.onclick = () => showTab(index);
+                tabs.appendChild(tab);
+
+                // 탭 내용
+                const content = document.createElement('div');
+                content.className = `tab-content ${index === 0 ? 'active' : ''}`;
+                content.textContent = summary.content;
+                content.id = `tab-${index}`;
+                tabContents.appendChild(content);
+            });
+
+            resultsSection.style.display = 'block';
+        }
+
+        function showTab(index) {
+            // 모든 탭 비활성화
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            // 선택된 탭 활성화
+            document.querySelectorAll('.tab')[index].classList.add('active');
+            document.getElementById(`tab-${index}`).classList.add('active');
+        }
+
+        // 페이지 로드 시 소켓 연결
+        window.addEventListener('load', connectSocket);
+
+        // Enter 키로 처리 시작
+        document.getElementById('youtubeUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                processVideo();
+            }
+        });
+    </script>
+</body>
+</html>

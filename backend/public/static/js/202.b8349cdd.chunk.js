@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunklilys_ai_clone_frontend=self.webpackChunklilys_ai_clone_frontend||[]).push([[202],{2202:(n,e,s)=>{s.r(e),s.d(e,{default:()=>a});s(5043);var t=s(6446),i=s(5865),l=s(3336),r=s(579);const a=()=>(0,r.jsxs)(t.A,{children:[(0,r.jsx)(i.A,{variant:"h4",gutterBottom:!0,children:"Settings"}),(0,r.jsx)(l.A,{sx:{p:3},children:(0,r.jsx)(i.A,{variant:"body1",children:"Settings page coming soon..."})})]})}}]);
-//# sourceMappingURL=202.b8349cdd.chunk.js.map

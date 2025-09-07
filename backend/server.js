@@ -1,243 +1,131 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
-const morgan = require('morgan');
-const http = require('http');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
-const logger = require('./utils/logger');
-const websocket = require('./utils/websocket');
-const QueueService = require('./services/QueueService');
-const AIWorker = require('./workers/aiWorker');
-const db = require('./models');
 
 // Import routes
-const authRouter = require('./routes/auth');
-const summariesRouter = require('./routes/summaries');
-const promptsRouter = require('./routes/prompts');
+const authRoutes = require('./routes/auth');
+const processRoutes = require('./routes/process');
+const historyRoutes = require('./routes/history');
+const adminRoutes = require('./routes/admin');
+const systemPromptsRoutes = require('./routes/systemPrompts');
 
+// Import services
+const { initializeWebSocket } = require('./services/websocket');
+const { initializeQueue } = require('./services/queue');
+const logger = require('./utils/logger');
+
+// Initialize Express app
 const app = express();
+const server = createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: ['http://localhost:3000', 'http://localhost:8000', 'http://localhost:8080'],
+    credentials: true
+  }
+});
 
-// Increase header size limit to fix 431 error
-const server = http.createServer({
-  maxHeaderSize: 32768 // 32KB
-}, app);
-const PORT = process.env.PORT || 5000;
-
-// Security middleware
+// Middleware
 app.use(helmet());
 app.use(compression());
-
-// CORS configuration
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3003',
-    'http://localhost:3003',
-    'http://localhost:3000',
-    'http://localhost:3004',
-    'http://localhost:3005',
-    'http://34.121.104.11',
-    'http://34.121.104.11:3003',
-    'http://34.121.104.11:5001',
-    'https://youtube.platformmakers.org',
-    'http://youtube.platformmakers.org'
-  ],
+  origin: ['http://localhost:3000', 'http://localhost:8000', 'http://localhost:8080'],
   credentials: true
 }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: '너무 많은 요청이 발생했습니다. 잠시 후 다시 시도해주세요.'
 });
+
 app.use('/api/', limiter);
 
-// Trust proxy for Cloudflare/Nginx with specific configuration
-app.set('trust proxy', 1); // Trust first proxy (nginx)
+// API Routes (이 순서가 중요합니다 - static 파일보다 먼저 와야 함)
+app.use('/api/auth', authRoutes);
+app.use('/api/process', processRoutes);
+app.use('/api/history', historyRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/system-prompts', systemPromptsRoutes);
 
-// Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Logging middleware
-if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined', {
-    stream: {
-      write: (message) => logger.info(message.trim())
-    }
-  }));
-}
-
-// Serve static files from React build
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
+  res.json({ 
+    status: 'ok', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development',
-    verification: 'LILYS-AI-CLONE-2025-08-28'
+    environment: process.env.NODE_ENV
   });
 });
 
-// API routes
-app.use('/api/auth', authRouter);
-app.use('/api/summaries', summariesRouter);
-app.use('/api/prompts', promptsRouter);
-app.use('/api/usage', require('./routes/api-usage'));
-app.use('/api/keys', require('./routes/apiKeys'));
-app.use('/api/system-prompts', require('./routes/systemPrompts'));
+// Serve static files from React app (API 라우트 이후에 위치)
+app.use(express.static('public'));
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  logger.error('Server Error:', err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || '서버 오류가 발생했습니다.',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
 
 // Serve React app for all non-API routes
 app.get('*', (req, res) => {
-  // Skip if it's an API route
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({
-      error: 'Endpoint not found',
-      path: req.originalUrl,
-      method: req.method
-    });
-  }
-  
-  // Serve React app
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.originalUrl,
-    method: req.method
-  });
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  logger.error('Unhandled error:', err);
-  
-  // Multer file upload errors
-  if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({
-      error: 'File too large',
-      message: 'File size exceeds the maximum limit of 50MB'
-    });
-  }
-  
-  if (err.message && err.message.includes('Unsupported file type')) {
-    return res.status(400).json({
-      error: 'Unsupported file type',
-      message: err.message
-    });
-  }
-  
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message
-  });
-});
-
 // Initialize services
-let queueService;
-let aiWorker;
-
-async function initializeServices() {
+const startServer = async () => {
   try {
     // Initialize database
-    // Skip sync - use migrations instead
-    // await db.sequelize.sync({ alter: process.env.NODE_ENV !== 'production' });
-    logger.info('Database ready (using migrations)');
-    
-    // Initialize default accounts
-    const initializeAccounts = require('./scripts/initializeAccounts');
-    await initializeAccounts();
-    logger.info('Default accounts initialized');
-    
-    // Initialize default prompts - DISABLED (manually manage prompts)
-    // const initializePrompts = require('./scripts/initializePrompts');
-    // await initializePrompts();
-    // logger.info('Default prompts initialized');
-    
-    // Initialize queue service
-    queueService = new QueueService();
-    logger.info('Queue service initialized');
-    
-    // Initialize AI worker
-    aiWorker = new AIWorker();
-    
-    // Set up queue processing
-    queueService.aiQueue.process('ai-processing', async (job) => {
-      return await aiWorker.processJob(job);
-    });
-    
-    // Set up YouTube processing
-    queueService.aiQueue.process('youtube-processing', async (job) => {
-      return await aiWorker.processJob(job);
-    });
-    
-    queueService.aiQueue.on('failed', async (job, err) => {
-      await aiWorker.handleFailedJob(job, err);
-    });
-    
-    logger.info('AI worker initialized and connected to queue');
-    
+    const db = require('./models');
+    await db.sequelize.authenticate();
+    logger.info('Database connected successfully');
+
+    // Sync database in development
+    if (process.env.NODE_ENV === 'development') {
+      await db.sequelize.sync({ alter: true });
+      logger.info('Database synced');
+    }
+
     // Initialize WebSocket
-    websocket.initialize(server);
-    logger.info('WebSocket server initialized');
-    
+    initializeWebSocket(io);
+    logger.info('WebSocket initialized');
+
+    // Initialize Queue
+    await initializeQueue();
+    logger.info('Queue system initialized');
+
+    // Start server
+    const PORT = process.env.PORT || 5001;
+    server.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV}`);
+    });
+
   } catch (error) {
-    logger.error('Failed to initialize services:', error);
+    logger.error('Failed to start server:', error);
     process.exit(1);
   }
-}
+};
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  
-  server.close(() => {
-    logger.info('HTTP server closed');
-  });
-  
-  if (queueService) {
-    await queueService.close();
-    logger.info('Queue service closed');
-  }
-  
-  process.exit(0);
-});
-
+// Handle process termination
 process.on('SIGINT', async () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  
+  logger.info('Shutting down server...');
   server.close(() => {
-    logger.info('HTTP server closed');
+    logger.info('Server closed');
+    process.exit(0);
   });
-  
-  if (queueService) {
-    await queueService.close();
-    logger.info('Queue service closed');
-  }
-  
-  process.exit(0);
 });
 
-// Start server
-server.listen(PORT, async () => {
-  logger.info(`Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  
-  // Initialize services after server starts
-  await initializeServices();
-  
-  logger.info('🚀 Lilys.AI Clone Backend is ready!');
-});
-
-module.exports = app;
+// Start the server
+startServer();

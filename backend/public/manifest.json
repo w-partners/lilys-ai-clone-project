@@ -1,6 +1,6 @@
 {
-  "short_name": "Lilys.AI Clone",
-  "name": "Lilys.AI Clone - AI Content Summarization",
+  "short_name": "React App",
+  "name": "Create React App Sample",
   "icons": [
     {
       "src": "favicon.ico",
@@ -20,7 +20,6 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#667eea",
-  "background_color": "#ffffff",
-  "description": "AI-powered content summarization platform"
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
 }

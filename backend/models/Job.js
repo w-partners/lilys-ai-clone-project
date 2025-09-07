@@ -1,4 +1,6 @@
-module.exports = (sequelize, DataTypes) => {
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
   const Job = sequelize.define('Job', {
     id: {
       type: DataTypes.UUID,
@@ -9,17 +11,34 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.UUID,
       allowNull: true,
       references: {
-        model: 'users',
+        model: 'Users',
         key: 'id'
       }
     },
+    sessionId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      validate: {
+        len: [1, 255]
+      }
+    },
     type: {
-      type: DataTypes.ENUM('file', 'url', 'text'),
+      type: DataTypes.ENUM('youtube'),
+      defaultValue: 'youtube',
       allowNull: false
     },
+    sourceUrl: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      validate: {
+        notEmpty: true,
+        isUrl: true
+      }
+    },
     status: {
-      type: DataTypes.ENUM('pending', 'processing', 'completed', 'failed', 'cancelled'),
-      defaultValue: 'pending'
+      type: DataTypes.ENUM('pending', 'processing', 'completed', 'failed'),
+      defaultValue: 'pending',
+      allowNull: false
     },
     progress: {
       type: DataTypes.INTEGER,
@@ -29,49 +48,41 @@ module.exports = (sequelize, DataTypes) => {
         max: 100
       }
     },
-    data: {
-      type: DataTypes.JSONB,
-      defaultValue: {},
-      comment: 'Job data and input parameters'
+    currentStage: {
+      type: DataTypes.STRING(100),
+      allowNull: true
     },
-    result: {
-      type: DataTypes.JSONB,
+    email: {
+      type: DataTypes.STRING,
       allowNull: true,
-      comment: 'Processing results and output'
+      validate: {
+        isEmail: true
+      }
+    },
+    errorMessage: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    processingStartedAt: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
+    processingCompletedAt: {
+      type: DataTypes.DATE,
+      allowNull: true
     },
     metadata: {
       type: DataTypes.JSONB,
-      defaultValue: {},
-      comment: 'Additional metadata'
-    },
-    error: {
-      type: DataTypes.JSONB,
-      allowNull: true,
-      comment: 'Error details if job failed'
-    },
-    startedAt: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-    completedAt: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-    attempts: {
-      type: DataTypes.INTEGER,
-      defaultValue: 0
-    },
-    priority: {
-      type: DataTypes.INTEGER,
-      defaultValue: 0,
-      comment: 'Higher number = higher priority'
+      defaultValue: {}
     }
   }, {
-    tableName: 'jobs',
     timestamps: true,
     indexes: [
       {
         fields: ['userId']
+      },
+      {
+        fields: ['sessionId']
       },
       {
         fields: ['status']
@@ -81,40 +92,9 @@ module.exports = (sequelize, DataTypes) => {
       },
       {
         fields: ['createdAt']
-      },
-      {
-        fields: ['priority', 'createdAt']
       }
     ]
   });
-
-  // Instance methods
-  Job.prototype.updateProgress = async function(progress, message = null) {
-    this.progress = progress;
-    if (message && this.result) {
-      this.result.progressMessage = message;
-    }
-    await this.save();
-  };
-
-  Job.prototype.markAsCompleted = async function(output) {
-    this.status = 'completed';
-    this.progress = 100;
-    this.result = output;
-    this.completedAt = new Date();
-    await this.save();
-  };
-
-  Job.prototype.markAsFailed = async function(error) {
-    this.status = 'failed';
-    this.error = {
-      message: error.message,
-      stack: error.stack,
-      timestamp: new Date()
-    };
-    this.completedAt = new Date();
-    await this.save();
-  };
 
   // Associations
   Job.associate = function(models) {
@@ -122,13 +102,13 @@ module.exports = (sequelize, DataTypes) => {
       foreignKey: 'userId',
       as: 'user'
     });
-    Job.hasOne(models.Summary, {
+    Job.hasMany(models.SourceContent, {
       foreignKey: 'jobId',
-      as: 'summary'
+      as: 'sourceContents'
     });
-    Job.hasMany(models.File, {
+    Job.hasMany(models.Summary, {
       foreignKey: 'jobId',
-      as: 'files'
+      as: 'summaries'
     });
   };
 

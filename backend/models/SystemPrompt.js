@@ -1,4 +1,6 @@
-module.exports = (sequelize, DataTypes) => {
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
   const SystemPrompt = sequelize.define('SystemPrompt', {
     id: {
       type: DataTypes.UUID,
@@ -6,52 +8,70 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true
     },
     name: {
-      type: DataTypes.STRING,
-      allowNull: false
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      validate: {
+        notEmpty: true,
+        len: [1, 100]
+      }
     },
-    promptText: {
+    prompt: {
       type: DataTypes.TEXT,
       allowNull: false,
-      field: 'prompt_text'
-    },
-    orderIndex: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      defaultValue: 0,
-      field: 'order_index'
-    },
-    category: {
-      type: DataTypes.STRING,
-      allowNull: true,
-      field: 'category'
+      validate: {
+        notEmpty: true,
+        len: [10, 5000]
+      }
     },
     isActive: {
       type: DataTypes.BOOLEAN,
-      defaultValue: true,
-      field: 'is_active'
+      defaultValue: true
+    },
+    orderIndex: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      validate: {
+        min: 0
+      }
+    },
+    category: {
+      type: DataTypes.STRING(50),
+      defaultValue: 'general',
+      validate: {
+        isIn: [['general', 'summary', 'analysis', 'quiz', 'translation', 'custom']]
+      }
     },
     createdBy: {
       type: DataTypes.UUID,
-      allowNull: false,
-      field: 'created_by',
-      references: {
-        model: 'users',
-        key: 'id'
-      }
+      allowNull: false
     }
   }, {
-    tableName: 'system_prompts',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      {
+        fields: ['isActive']
+      },
+      {
+        fields: ['orderIndex']
+      },
+      {
+        fields: ['category']
+      },
+      {
+        fields: ['createdBy']
+      }
+    ]
   });
 
+  // Associations
   SystemPrompt.associate = function(models) {
     SystemPrompt.belongsTo(models.User, {
       foreignKey: 'createdBy',
       as: 'creator'
     });
-    SystemPrompt.hasMany(models.SummaryResult, {
+    SystemPrompt.hasMany(models.Summary, {
       foreignKey: 'systemPromptId',
-      as: 'summaryResults'
+      as: 'summaries'
     });
   };
 

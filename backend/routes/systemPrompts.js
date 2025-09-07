@@ -1,215 +1,353 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
+const { SystemPrompt, User } = require('../models');
+const logger = require('../utils/logger');
+
 const router = express.Router();
-const auth = require('../middleware/auth');
-const admin = require('../middleware/admin');
-const db = require('../models');
-const { Op } = require('sequelize');
 
-// Get all system prompts
-router.get('/', auth, async (req, res) => {
+// JWT 토큰 검증 및 관리자 권한 확인 미들웨어
+const authenticateAdmin = async (req, res, next) => {
   try {
-    const prompts = await db.SystemPrompt.findAll({
-      where: req.user.role === 'admin' ? {} : { isActive: true },
-      order: [['category', 'ASC'], ['orderIndex', 'ASC']],
-      include: [{
-        model: db.User,
-        as: 'creator',
-        attributes: ['id', 'name', 'phone']
-      }]
-    });
-
-    res.json({
-      success: true,
-      data: prompts
-    });
-  } catch (error) {
-    console.error('Error fetching system prompts:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch system prompts'
-    });
-  }
-});
-
-// Get active prompts for processing (internal use)
-router.get('/active', auth, async (req, res) => {
-  try {
-    const prompts = await db.SystemPrompt.findAll({
-      where: { isActive: true },
-      order: [['category', 'ASC'], ['orderIndex', 'ASC']]
-    });
-
-    res.json({
-      success: true,
-      data: prompts
-    });
-  } catch (error) {
-    console.error('Error fetching active prompts:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch active prompts'
-    });
-  }
-});
-
-// Public API: Get active prompts for public use (no auth required)
-router.get('/public', async (req, res) => {
-  try {
-    const prompts = await db.SystemPrompt.findAll({
-      where: { isActive: true },
-      order: [['orderIndex', 'ASC'], ['category', 'ASC']],
-      attributes: ['id', 'name', 'category', 'orderIndex'] // Only return necessary fields
-    });
-
-    res.json({
-      success: true,
-      data: prompts
-    });
-  } catch (error) {
-    console.error('Error fetching public prompts:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch system prompts'
-    });
-  }
-});
-
-// Create new system prompt (admin only)
-router.post('/', auth, admin, async (req, res) => {
-  try {
-    const { name, prompt, category, order, isActive, description } = req.body;
-
-    if (!name || !prompt) {
-      return res.status(400).json({
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({
         success: false,
-        error: 'Name and prompt are required'
+        error: '로그인이 필요한 서비스입니다.'
       });
     }
 
-    const systemPrompt = await db.SystemPrompt.create({
-      name,
-      promptText: prompt,
-      category: category || 'summary',
-      orderIndex: order || 0,
-      isActive: isActive !== undefined ? isActive : true,
-      createdBy: req.user.id,
-      metadata: { description: description || '' }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findByPk(decoded.userId);
+    
+    if (!user || !user.isActive || user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: '관리자 권한이 필요합니다.'
+      });
+    }
+
+    req.user = user;
+    next();
+
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: '유효하지 않은 인증 토큰입니다.'
     });
+  }
+};
+
+/**
+ * 활성 시스템 프롬프트 목록 조회 (공개)
+ * GET /api/system-prompts
+ */
+router.get('/', async (req, res) => {
+  try {
+    const prompts = await SystemPrompt.findAll({
+      where: { isActive: true },
+      attributes: ['id', 'name', 'category', 'orderIndex'],
+      order: [['orderIndex', 'ASC']]
+    });
+
+    res.json({
+      success: true,
+      data: prompts
+    });
+
+  } catch (error) {
+    logger.error('System prompts query error:', error);
+    res.status(500).json({
+      success: false,
+      error: '시스템 프롬프트 조회 중 오류가 발생했습니다.'
+    });
+  }
+});
+
+/**
+ * 카테고리별 시스템 프롬프트 조회 (공개)
+ * GET /api/system-prompts/category/:category
+ */
+router.get('/category/:category', async (req, res) => {
+  try {
+    const { category } = req.params;
+    
+    const validCategories = ['general', 'summary', 'analysis', 'quiz', 'translation', 'custom'];
+    if (!validCategories.includes(category)) {
+      return res.status(400).json({
+        success: false,
+        error: '유효하지 않은 카테고리입니다.'
+      });
+    }
+
+    const prompts = await SystemPrompt.findAll({
+      where: { 
+        category: category,
+        isActive: true 
+      },
+      attributes: ['id', 'name', 'category', 'orderIndex'],
+      order: [['orderIndex', 'ASC']]
+    });
+
+    res.json({
+      success: true,
+      data: prompts
+    });
+
+  } catch (error) {
+    logger.error('System prompts by category query error:', error);
+    res.status(500).json({
+      success: false,
+      error: '카테고리별 시스템 프롬프트 조회 중 오류가 발생했습니다.'
+    });
+  }
+});
+
+/**
+ * 시스템 프롬프트 상세 조회 (공개)
+ * GET /api/system-prompts/:id
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id || id.length !== 36) {
+      return res.status(400).json({
+        success: false,
+        error: '유효하지 않은 ID입니다.'
+      });
+    }
+
+    const prompt = await SystemPrompt.findOne({
+      where: { 
+        id: id,
+        isActive: true 
+      },
+      attributes: ['id', 'name', 'prompt', 'category', 'orderIndex']
+    });
+
+    if (!prompt) {
+      return res.status(404).json({
+        success: false,
+        error: '해당 시스템 프롬프트를 찾을 수 없습니다.'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: prompt
+    });
+
+  } catch (error) {
+    logger.error('System prompt detail query error:', error);
+    res.status(500).json({
+      success: false,
+      error: '시스템 프롬프트 상세 조회 중 오류가 발생했습니다.'
+    });
+  }
+});
+
+/**
+ * 시스템 프롬프트 생성 (관리자 전용)
+ * POST /api/system-prompts
+ */
+router.post('/', authenticateAdmin, async (req, res) => {
+  try {
+    const { name, content, category = 'general', orderIndex = 0 } = req.body;
+
+    if (!name || !content) {
+      return res.status(400).json({
+        success: false,
+        error: '이름과 내용은 필수 입력 항목입니다.'
+      });
+    }
+
+    if (name.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: '이름은 100자를 초과할 수 없습니다.'
+      });
+    }
+
+    const prompt = await SystemPrompt.create({
+      name,
+      prompt: content,
+      category,
+      orderIndex: parseInt(orderIndex) || 0,
+      createdBy: req.user.id,
+      isActive: true
+    });
+
+    logger.info(`System prompt created: ${prompt.id} by user ${req.user.id}`);
 
     res.status(201).json({
       success: true,
-      data: systemPrompt
+      data: {
+        id: prompt.id,
+        name: prompt.name,
+        content: prompt.prompt,
+        category: prompt.category,
+        orderIndex: prompt.orderIndex,
+        isActive: prompt.isActive
+      }
     });
+
   } catch (error) {
-    console.error('Error creating system prompt:', error);
+    logger.error('System prompt creation error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to create system prompt'
+      error: '시스템 프롬프트 생성 중 오류가 발생했습니다.'
     });
   }
 });
 
-// Update system prompt (admin only)
-router.put('/:id', auth, admin, async (req, res) => {
+/**
+ * 시스템 프롬프트 수정 (관리자 전용)
+ * PUT /api/system-prompts/:id
+ */
+router.put('/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, prompt, category, order, isActive, description } = req.body;
+    const { name, content, category, orderIndex, isActive } = req.body;
 
-    const systemPrompt = await db.SystemPrompt.findByPk(id);
-    if (!systemPrompt) {
-      return res.status(404).json({
-        success: false,
-        error: 'System prompt not found'
-      });
-    }
-
-    const updateData = {
-      name: name || systemPrompt.name,
-      promptText: prompt || systemPrompt.promptText,
-      category: category || systemPrompt.category,
-      orderIndex: order !== undefined ? order : systemPrompt.orderIndex,
-      isActive: isActive !== undefined ? isActive : systemPrompt.isActive
-    };
-
-    // Handle description in metadata
-    if (description !== undefined) {
-      updateData.metadata = { ...systemPrompt.metadata, description };
-    }
-
-    await systemPrompt.update(updateData);
-
-    res.json({
-      success: true,
-      data: systemPrompt
-    });
-  } catch (error) {
-    console.error('Error updating system prompt:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update system prompt'
-    });
-  }
-});
-
-// Delete system prompt (admin only)
-router.delete('/:id', auth, admin, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const systemPrompt = await db.SystemPrompt.findByPk(id);
-    if (!systemPrompt) {
-      return res.status(404).json({
-        success: false,
-        error: 'System prompt not found'
-      });
-    }
-
-    await systemPrompt.destroy();
-
-    res.json({
-      success: true,
-      message: 'System prompt deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting system prompt:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete system prompt'
-    });
-  }
-});
-
-// Reorder system prompts (admin only)
-router.post('/reorder', auth, admin, async (req, res) => {
-  try {
-    const { prompts } = req.body;
-
-    if (!Array.isArray(prompts)) {
+    if (!id || id.length !== 36) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid prompts array'
+        error: '유효하지 않은 ID입니다.'
       });
     }
 
-    // Update order for each prompt
-    const updatePromises = prompts.map((item, index) => 
-      db.SystemPrompt.update(
-        { orderIndex: index },
-        { where: { id: item.id } }
-      )
-    );
+    const prompt = await SystemPrompt.findByPk(id);
 
-    await Promise.all(updatePromises);
+    if (!prompt) {
+      return res.status(404).json({
+        success: false,
+        error: '해당 시스템 프롬프트를 찾을 수 없습니다.'
+      });
+    }
+
+    const updateData = {};
+    if (name !== undefined) {
+      if (!name || name.length > 100) {
+        return res.status(400).json({
+          success: false,
+          error: '유효한 이름을 입력해주세요.'
+        });
+      }
+      updateData.name = name;
+    }
+    if (content !== undefined) {
+      if (!content) {
+        return res.status(400).json({
+          success: false,
+          error: '내용을 입력해주세요.'
+        });
+      }
+      updateData.prompt = content;
+    }
+    if (category !== undefined) updateData.category = category;
+    if (orderIndex !== undefined) updateData.orderIndex = parseInt(orderIndex);
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    await prompt.update(updateData);
+
+    logger.info(`System prompt updated: ${id} by user ${req.user.id}`);
 
     res.json({
       success: true,
-      message: 'Prompts reordered successfully'
+      data: {
+        id: prompt.id,
+        name: prompt.name,
+        content: prompt.prompt,
+        category: prompt.category,
+        orderIndex: prompt.orderIndex,
+        isActive: prompt.isActive
+      }
     });
+
   } catch (error) {
-    console.error('Error reordering prompts:', error);
+    logger.error('System prompt update error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to reorder prompts'
+      error: '시스템 프롬프트 수정 중 오류가 발생했습니다.'
+    });
+  }
+});
+
+/**
+ * 시스템 프롬프트 삭제 (관리자 전용)
+ * DELETE /api/system-prompts/:id
+ */
+router.delete('/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id || id.length !== 36) {
+      return res.status(400).json({
+        success: false,
+        error: '유효하지 않은 ID입니다.'
+      });
+    }
+
+    const prompt = await SystemPrompt.findByPk(id);
+
+    if (!prompt) {
+      return res.status(404).json({
+        success: false,
+        error: '해당 시스템 프롬프트를 찾을 수 없습니다.'
+      });
+    }
+
+    await prompt.destroy();
+
+    logger.info(`System prompt deleted: ${id} by user ${req.user.id}`);
+
+    res.json({
+      success: true,
+      message: '시스템 프롬프트가 삭제되었습니다.'
+    });
+
+  } catch (error) {
+    logger.error('System prompt delete error:', error);
+    res.status(500).json({
+      success: false,
+      error: '시스템 프롬프트 삭제 중 오류가 발생했습니다.'
+    });
+  }
+});
+
+/**
+ * 모든 시스템 프롬프트 목록 조회 (관리자 전용)
+ * GET /api/system-prompts/admin/all
+ */
+router.get('/admin/all', authenticateAdmin, async (req, res) => {
+  try {
+    const prompts = await SystemPrompt.findAll({
+      attributes: ['id', 'name', 'prompt', 'category', 'orderIndex', 'isActive', 'createdAt', 'updatedAt'],
+      order: [['orderIndex', 'ASC'], ['createdAt', 'DESC']]
+    });
+
+    res.json({
+      success: true,
+      data: {
+        prompts: prompts.map(prompt => ({
+          id: prompt.id,
+          name: prompt.name,
+          content: prompt.prompt,
+          category: prompt.category,
+          orderIndex: prompt.orderIndex,
+          isActive: prompt.isActive,
+          createdAt: prompt.createdAt,
+          updatedAt: prompt.updatedAt
+        }))
+      }
+    });
+
+  } catch (error) {
+    logger.error('Admin system prompts query error:', error);
+    res.status(500).json({
+      success: false,
+      error: '시스템 프롬프트 조회 중 오류가 발생했습니다.'
     });
   }
 });
